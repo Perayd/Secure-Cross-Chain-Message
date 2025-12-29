@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract CrossChainSecureExecutor is Ownable {
+    using ECDSA for bytes32;
+
+    mapping(bytes32 => bool) public executedMessages;
+    mapping(address => bool) public trustedRelayers;
+
+    event MessageExecuted(bytes32 indexed messageHash, address indexed relayer);
+    event RelayerUpdated(address relayer, bool trusted);
+
+    struct CrossChainMessage {
+        address sender;
+        address receiver;
+        uint256 amount;
+        uint256 sourceChainId;
+        uint256 targetChainId;
+        uint256 nonce;
+    }
+
+    function setRelayer(address relayer, bool trusted) external onlyOwner {
+        trustedRelayers[relayer] = trusted;
+        emit RelayerUpdated(relayer, trusted);
+    }
+
+    function executeMessage(
+        CrossChainMessage calldata message,
+        bytes calldata signature
+    ) external {
+        require(trustedRelayers[msg.sender], "Untrusted relayer");
+        require(message.targetChainId == block.chainid, "Wrong target chain");
+
+        bytes32 messageHash = getMessageHash(message);
+        require(!executedMessages[messageHash], "Message already executed");
+
+        address signer = messageHash.toEthSignedMessageHash().recover(signature);
+        require(signer == message.sender, "Invalid signature");
+
+        executedMessages[messageHash] = true;
+
+        // Example execution logic
+        payable(message.receiver).transfer(message.amount);
+
+        emit MessageExecuted(messageHash, msg.sender);
+    }
+
+    function getMessageHash(
+        CrossChainMessage calldata message
+    ) public pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                message.sender,
+                message.receiver,
+                message.amount,
+                message.sourceChainId,
+                message.targetChainId,
+                message.nonce
+            )
+        );
+    }
+
+    receive() external payable {}
+}
